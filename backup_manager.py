@@ -12,7 +12,7 @@ load_dotenv()
 def backup_code_to_github():
     print("🔄 開始備份程式碼到 GitHub...")
     try:
-        subprocess.run(["git", "add", "*.py", "*.md", "requirements.txt"], check=True)
+        subprocess.run(["git", "add", "."], check=True)
         subprocess.run(["git", "commit", "-m", "🤖 自動備份：更新策略與程式碼"], check=True)
         subprocess.run(["git", "push"], check=True)
         print("✅ GitHub 程式碼備份完成！")
