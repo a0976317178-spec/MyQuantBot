@@ -1,0 +1,589 @@
+【AI 分析總結】
+從提供的代碼來看，這是一個台股量化交易機器人專案，主要功能包括:
+
+1. 系統架構:
+- 使用 Telegram Bot 作為操作介面
+- 整合 Claude AI 進行智能分析
+- 採用 LightGBM 機器學習模型做選股
+- SQLite 資料庫儲存股票數據
+
+2. 主要交易邏輯:
+- 技術分析: RSI、ATR、MACD、乖離率等技術指標
+- 基本面: 月營收、EPS 等基本面因子
+- 籌碼面: 三大法人買賣超等籌碼因子 
+- 宏觀因子: VIX指數、市場強度(ADL)
+
+3. 自動化功能:
+- 每日收盤後自動選股並推送結果
+- 自動追蹤買賣信號及績效
+- 每週自動重新訓練模型
+- 每日爬取最新股市數據
+
+4. 特色功能:
+- 支援自定義交易規則
+- 可記憶用戶偏好及對話歷史
+- 具備回測功能驗證策略
+- 提供宏觀市場分析
+
+這是一個相當完整的量化交易系統,整合了技術、基本面、籌碼面等多維度分析,並結合 AI 與機器學習,適合想要系統化操作台股的投資人使用。
+
+【原始抓取代碼】
+📦 倉庫名稱：a0976317178-spec/quant-bot
+
+=== 【檔案：DEPLOY_GUIDE.md】 ===
+# 量化師 Bot — VPS 部署 & 重啟完整指南
+
+## 第一步：把修復的檔案上傳到 VPS
+
+在你的電腦上，用 scp 把下載的檔案傳上去：
+
+```bash
+# 先在 VPS 建一個暫存資料夾
+ssh your_user@your_vps_ip "mkdir -p ~/uploads"
+
+# 從你的電腦把修復檔案傳上去（在你電腦上執行）
+scp analyzer.py       your_user@your_vps_ip:~/uploads/
+scp engine.py         your_user@your_vps_ip:~/uploads/
+scp ai_self_learning.py  your_user@your_vps_ip:~/uploads/
+scp tw_stock_news.py  your_user@your_vps_ip:~/uploads/
+scp deploy.sh         your_user@your_vps_ip:~/uploads/
+```
+
+---
+
+## 第二步：在 VPS 上執行部署腳本
+
+```bash
+# SSH 進入 VPS
+ssh your_user@your_vps_ip
+
+# 執行一鍵部署
+bash ~/uploads/deploy.sh
+```
+
+---
+
+## 第三步：手動 patch main.py（新增指令和排程函式）
+
+由於 main.py 結構複雜，排程函式需要手動加。
+在 VPS 上執行：
+
+```bash
+cd ~/quant-bot    # 換成你的實際路徑
+nano main.py      # 或用 vim main.py
+```
+
+### A. 在 run_scheduler() 函式內，找到這一段：
+
+```python
+schedule.every().sunday.at("21:00").do(lambda: asyncio.run(do_weekly_learning()))
+```
+
+### 在它後面加入（縮排要對齊，4個空格）：
+
+```python
+    async def do_daily_news():
+        from telegram import Bot
+        bot = Bot(token=bot_token)
+        try:
+            report = run_daily_news_summary(claude_client)
+            for uid in user_ids:
+                for i in range(0, len(report), 4000):
+                    await bot.send_message(chat_id=uid, text=report[i:i+4000])
+        except Exception as e:
+            logger.error(f"每日新聞推送失敗: {e}")
+
+    async def do_self_learning():
+        from telegram import Bot
+        bot = Bot(token=bot_token)
+        try:
+            report = run_daily_self_learning(claude_client)
+            for uid in user_ids:
+                await bot.send_message(chat_id=uid, text=report[:4000])
+        except Exception as e:
+            logger.error(f"每日自學習推送失敗: {e}")
+
+    schedule.every().day.at("16:00").do(lambda: asyncio.run(do_daily_news()))
+    schedule.every().day.at("21:00").do(lambda: asyncio.run(do_self_learning()))
+```
+
+### B. 在 handle_text() 的 routes 字典裡新增一行：
+
+```python
+        ("新聞", "今日新聞", "news"): cmd_news,
+```
+
+### C. 在 main() 的 cmds 列表新增：
+
+```python
+        ("news", cmd_news),
+```
+
+=== 【檔案：README.md】 ===
+# 🤖 台股量化交易 AI Bot
+
+整合 Claude AI + LightGBM + Telegram Bot 的台股量化選股系統
+
+---
+
+## 📁 專案結構
+
+```
+quant_bot/
+├── main.py                  # TG Bot 主程式 + Claude API
+├── config.py                # 全域設定
+├── scheduler.py             # 每日盤後自動排程
+├── requirements.txt
+├── .env.example
+│
+├── factors/                 # 第二階段：因子計算
+│   ├── technical.py         # 量價因子（RSI/ATR/MACD/乖離率）
+│   ├── flow.py              # 籌碼因子（三大法人）
+│   ├── fundamental.py       # 基本面因子（營收/EPS）
+│   ├── macro.py             # 宏觀因子（VIX/ADL）
+│   └── labeling.py          # 第三階段：標籤定義
+│
+├── ml/                      # 第四階段：機器學習
+│   ├── train.py             # LightGBM Walk-Forward 訓練
+│   └── predict.py           # 選股預測
+│
+├── memory/                  # 記憶模組
+│   └── rules_manager.py     # 自訂規則 + 對話記憶
+│
+└── data/                    # 資料儲存
+    ├── factors/             # 因子數據
+    ├── models/              # 訓練好的模型
+    └── raw/                 # 原始爬蟲數據
+```
+
+---
+
+## 🚀 安裝與啟動
+
+```bash
+# 1. 切換到專案目錄
+cd /d E:\cloud
+
+# 2. 建立虛擬環境
+python -m venv venv
+venv\Scripts\activate
+
+# 3. 安裝套件
+pip install -r requirements.txt
+
+# 4. 設定環境變數
+copy .env.example .env
+notepad .env
+
+# 5. 啟動 Bot
+python main.py
+```
+
+---
+
+## ⚙️ .env 設定
+
+```
+TELEGRAM_BOT_TOKEN=你的TG Token
+ANTHROPIC_API_KEY=你的Claude API Key
+ALLOWED_USER_IDS=你的TG User ID
+```
+
+---
+
+## 📋 TG Bot 指令
+
+| 指令 | 說明 |
+|------|------|
+| `/start` | 啟動 Bot |
+| `/chat <問題>` | 與 Claude 對話 |
+| `/analyze <代號>` | 分析股票（例：/analyze 2330） |
+| `/screen` | 執行 ML 選股掃描 |
+| `/macro` | 查看宏觀指標（VIX/ADL） |
+| `/teach <規則>` | 教導 AI 您的選股規則 |
+| `/rules` | 查看所有自訂規則 |
+| `/delrule <編號>` | 刪除規則 |
+| `/clear` | 清除對話記憶 |
+| `/train` | 重新訓練 ML 模型 |
+
+---
+
+## 🧠 如何「訓練」AI 記住您的策略
+
+```
+/teach 外資連買3天以上才考慮進場
+/teach RSI必須在50到70之間
+/teach 月營收年增率需大於10%
+/teach 大盤VIX超過25時停止操作
+```
+
+這些規則會永久儲存，每次分析時 AI 都會自動套用。
+
+---
+
+## 🤖 自動排程
+
+每天 15:35（台股收盤後）自動執行：
+- 爬取最新因子數據
+- 執行 ML 預測
+- 推播選股結果到 TG
+
+每週日 22:00 自動重新訓練模型。
+
+---
+
+## ⚠️ 免責聲明
+
+本系統僅供學習研究使用，不構成任何投資建議。
+股票投資有風險，請自行評估並承擔投資損失。
+
+
+=== 【檔案：ai_signal_tracker.py】 ===
+"""
+ai_signal_tracker.py - AI 自動信號追蹤器
+
+功能：
+  1. 每日收盤後掃描所有自選股，評分 >= 門檻自動記錄「買入信號」
+  2. 信號進入 ai_signal_log 資料表追蹤後續績效
+  3. 每天自動評估：哪些信號成功（隔日漲），哪些失敗
+  4. 每週自我學習：分析信號成功率，調整門檻，讓 AI 越來越準
+  5. 可手動查看信號清單、統計、績效報告
+
+不需要人工記錄！系統自動完成買賣信號追蹤。
+"""
+import json
+import logging
+import os
+from datetime import datetime, timedelta
+from database.db_manager import get_conn, query_df
+
+logger = logging.getLogger(__name__)
+
+# 信號觸發門檻（可透過指令動態調整）
+SIGNAL_CONFIG_FILE = "data/signal_config.json"
+DEFAULT_CONFIG = {
+    "buy_score_threshold": 65,    # 買入信號門檻分數
+    "sell_score_threshold": 40,   # 賣出/清倉信號門檻
+    "eval_days": [1, 3, 5, 10],   # 評估信號後幾天的表現
+    "auto_close_days": 20,        # 超過幾天自動關閉信號（視為過期）
+    "min_vol_ratio": 1.0,         # 最小量能倍數（避免低量騙線）
+}
+
+
+def _load_config() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(SIGNAL_CONFIG_FILE):
+        try:
+            with open(SIGNAL_CONFIG_FILE, "r") as f:
+                cfg = DEFAULT_CONFIG.copy()
+                cfg.update(json.load(f))
+                return cfg
+        except Exception:
+            pass
+    return DEFAULT_CONFIG.copy()
+
+
+def _save_config(cfg: dict):
+    os.makedirs("data", exist_ok=True)
+    with open(SIGNAL_CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+# ══════════════════════════════════════════
+# 資料庫操作
+# ══════════════════════════════════════════
+
+def ensure_signal_table():
+    """確保 ai_signal_log 資料表存在"""
+    with get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ai_signal_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id TEXT NOT NULL,
+                stock_name TEXT DEFAULT '',
+                signal_type TEXT NOT NULL,      -- 'BUY' / 'SELL'
+                signal_date TEXT NOT NULL,
+                entry_price REAL DEFAULT 0,
+                score INTEGER DEFAULT 0,
+                tech_score INTEGER DEFAULT 0,
+                chip_score INTEGER DEFAULT 0,
+                fund_score INTEGER DEFAULT 
+
+=== 【檔案：alert/__init__.py】 ===
+
+
+=== 【檔案：alert/daily_alert.py】 ===
+"""
+alert/daily_alert.py - 每日選股提醒（完整版 v3）
+功能清單：
+  🥇 訊號追蹤+驗證    🥈 52週高低點+突破判斷
+  🥉 族群強弱比較     🏅 動態評分權重
+  💳 融資餘額         🔵 外資連買天數
+  📊 停利停損顯示     🏆 回測勝率標註
+  👑 產業龍頭標記     💎 籌碼集中度
+"""
+import json, logging, os, threading
+from datetime import datetime, timedelta
+from database.db_manager import query_df, get_conn
+
+logger = logging.getLogger(__name__)
+
+MIN_VOLUME_LOTS = 3000
+MIN_SCORE       = 60
+MAX_RESULTS     = 50
+MIN_PRICE       = 10.0
+MAX_PRICE       = 2000.0
+SIGNAL_LOG_PATH = "data/signal_log.jsonl"
+WEIGHT_PATH     = "data/dynamic_weights.json"
+BACKTEST_PATH   = "data/backtest_winrate.json"
+
+def _ensure_dir():
+    os.makedirs("data", exist_ok=True)
+
+# ══ 🥇 訊號追蹤 ══════════════════════════════════════════
+
+def save_signal(stock_id, name, score, close, date):
+    _ensure_dir()
+    record = {"stock_id": stock_id, "name": name, "score": score,
+              "entry": close, "date": date, "verified": False, "ret_pct": None}
+    with open(SIGNAL_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+def verify_signals() -> str:
+    _ensure_dir()
+    if not os.path.exists(SIGNAL_LOG_PATH):
+        return ""
+    target_date = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+    records = []
+    with open(SIGNAL_LOG_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                obj = json.loads(line.strip())
+                if obj.get("date") == target_date and not obj.get("verified"):
+                    records.append(obj)
+            except Exception:
+                pass
+    if not records:
+        return ""
+    results = []
+    for rec in records:
+        df = query_df("SELECT close FROM daily_price WHERE stock_id=? ORDER BY date DESC LIMIT 1", (rec["stock_id"],))
+        if df.empty:
+            continue
+        current = float(df.iloc[0]["close"])
+        ret = (current - rec["entry"]) / rec["entry"] * 100
+        results.append({**rec, "current": round(current,2), "ret_pct": round(ret,2)})
+
+
+=== 【檔案：backtest/__init__.py】 ===
+ 
+
+
+=== 【檔案：backtest/engine.py】 ===
+"""
+backtest/engine.py - 歷史回測引擎（修復版）
+修復：
+  1. 參數名改為 stock_id（main.py 呼叫時用的是 stock_id= 不是 stock_ids=）
+  2. 不再依賴 factor_cache 表的 label（大多數環境沒有這張表的資料）
+  3. 改用 rule-based 策略（MA+RSI信號）直接從 daily_price 跑回測
+  4. 支援單一股票精確回測，也支援多股回測
+"""
+import pandas as pd
+import numpy as np
+import logging
+from datetime import datetime, timedelta
+from database.db_manager import query_df
+
+logger = logging.getLogger(__name__)
+
+
+def _get_price_data(stock_id: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    從資料庫取得某股歷史價格（含均線計算用資料）
+    多抓60天歷史供 MA60 計算
+    """
+    # 多往前抓60天，確保第一個交易日能算出完整均線
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        fetch_from = (start_dt - timedelta(days=90)).strftime("%Y-%m-%d")
+    except Exception:
+        fetch_from = "2020-01-01"
+
+    sql = """
+        SELECT date, open, high, low, close, volume
+        FROM daily_price
+        WHERE stock_id = ? AND date >= ? AND date <= ?
+        ORDER BY date ASC
+    """
+    df = query_df(sql, (stock_id, fetch_from, end_date))
+    if df.empty:
+        return pd.DataFrame()
+
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # ✅ 成交量轉為「張」（除以1000）
+    df["volume"] = (df["volume"] / 1000).astype(int)
+
+    # 計算技術指標
+    df["ma5"]  = df["close"].rolling(5).mean()
+    df["ma20"] = df["close"].rolling(20).mean()
+    df["ma60"] = df["close"].rolling(60).mean()
+    df["vol_ma20"] = df["volume"].rolling(20).mean()
+
+    # RSI
+    delta = df["close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+    rs = avg_gain / avg_loss.replace(0, 0.001)
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    # 乖離率
+    df["bias20"] = (df["close"] - df["ma20"]) / df["ma20"] * 100
+
+    # 過濾到回測區間
+    df = df[df["date"] >= pd.to_datetime(start_date)].reset_index(drop=True)
+    return df
+
+
+def _generate_signals(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    rule-based 買進信號（不需要 fac
+
+=== 【檔案：config.py】 ===
+"""
+config.py - 全域設定
+"""
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── Telegram ─────────────────────────────────────
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ALLOWED_USER_IDS = [
+    int(uid.strip())
+    for uid in os.getenv("ALLOWED_USER_IDS", "").split(",")
+    if uid.strip()
+]
+
+# ── Claude API ───────────────────────────────────
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+# 日常對話用輕量模型（省 Token）
+CLAUDE_FAST_MODEL = "claude-haiku-4-5-20251001"
+
+# 複雜分析、程式生成用強力模型
+CLAUDE_SMART_MODEL = "claude-sonnet-4-6"
+
+# ── 路徑設定 ─────────────────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+FACTORS_DIR = os.path.join(DATA_DIR, "factors")
+MODELS_DIR = os.path.join(DATA_DIR, "models")
+RAW_DIR = os.path.join(DATA_DIR, "raw")
+MEMORY_DIR = os.path.join(BASE_DIR, "memory")
+
+# 自動建立資料夾
+for d in [DATA_DIR, FACTORS_DIR, MODELS_DIR, RAW_DIR, MEMORY_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+# ── 選股標籤設定（第三階段）────────────────────────
+LABEL_CONFIG = {
+    "future_days": 5,        # 未來觀察天數
+    "target_up_pct": 0.05,   # 最高價需上漲 5%
+    "stop_loss_pct": 0.02,   # 最低價不得跌破 2%
+}
+
+# ── 技術因子設定（第二階段）────────────────────────
+FACTOR_CONFIG = {
+    "return_windows": [5, 10, 20],   # 報酬率回看天數
+    "rsi_period": 14,
+    "atr_period": 14,
+    "ma_period": 20,
+    "macd_fast": 12,
+    "macd_slow": 26,
+    "macd_signal": 9,
+}
+
+
+=== 【檔案：database/__init__.py】 ===
+
+
+=== 【檔案：database/crawl_missing.py】 ===
+"""
+database/crawl_missing.py - 補齊缺少的數據
+執行：python3 crawl_missing.py
+會依序爬取：三大法人、月營收、宏觀指標（VIX）
+"""
+import sys
+import os
+import time
+import logging
+import requests
+from datetime import datetime, timedelta
+
+# 讓 Python 找得到其他模組
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def crawl_institutional_twse():
+    """
+    爬取三大法人買賣超（證交所）
+    資料：外資、投信、自營商 每日買賣超（張數）
+    """
+    from database.db_manager import get_conn, query_df
+
+    logger.info("開始爬取三大法人數據...")
+    headers = {"User-Agent": "Mozilla/5.0"}
+    success = 0
+
+    # 爬近180天
+    today = datetime.now()
+    for delta in range(180):
+        date = today - timedelta(days=delta)
+        if date.weekday() >= 5:  # 跳過週末
+            continue
+
+        date_str = date.strftime("%Y%m%d")
+        date_db  = date.strftime("%Y-%m-%d")
+
+        # 確認是否已有資料
+        with get_conn() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM institutional WHERE date=?", (date_db,)
+            ).fetchone()[0]
+            if count > 0:
+                continue
+
+        try:
+            url = "https://www.twse.com.tw/fund/T86"
+            params = {"response": "json", "date": date_str, "selectType": "ALL"}
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            data = resp.json()
+
+            if data.get("stat") != "OK":
+                time.sleep(0.5)
+                continue
+
+            rows = data.get("data", [])
+            records = []
+            for row in rows:
+                try:
+                    stock_id = str(row[0]).strip()
+                    if not stock_id.isdigit() or len(stock_id) != 4:
+                        continue
+
+                    def parse_int(s):
+                        return int(str(s).replace(",", "").replace("+", "") or 0)
+
+                    foreign_net = parse_int(row[4])   # 外資買賣超
+      
+
+
+... (為避免超出大腦容量，僅擷取前 10 個主要檔案) ...
